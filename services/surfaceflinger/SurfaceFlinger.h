@@ -1553,6 +1553,7 @@ private:
 
     bool mLumaSampling = true;
     bool mForceLightBrightness = false;
+    bool mForceHwcBrightness = false;
     sp<RegionSamplingThread> mRegionSamplingThread;
     sp<FpsReporter> mFpsReporter;
     sp<TunnelModeEnabledReporter> mTunnelModeEnabledReporter;
