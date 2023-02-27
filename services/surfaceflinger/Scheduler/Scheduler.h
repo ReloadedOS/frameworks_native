@@ -89,6 +89,8 @@ struct ISchedulerCallback {
     virtual void requestDisplayMode(DisplayModePtr, DisplayModeEvent) = 0;
     virtual void kernelTimerChanged(bool expired) = 0;
     virtual void triggerOnFrameRateOverridesChanged() = 0;
+    virtual void getModeFromFps(float, DisplayModePtr&) = 0;
+    virtual nsecs_t getVsyncPeriodFromHWCcb() = 0;
 
 protected:
     ~ISchedulerCallback() = default;
@@ -116,6 +118,7 @@ public:
     using Impl::setDuration;
 
     using Impl::scheduleFrame;
+    using Impl::scheduleFrameImmed;
 
     // Schedule an asynchronous or synchronous task on the main thread.
     template <typename F, typename T = std::invoke_result_t<F>>
@@ -130,8 +133,8 @@ public:
                                       std::chrono::nanoseconds readyDuration,
                                       impl::EventThread::InterceptVSyncsCallback);
 
-    sp<IDisplayEventConnection> createDisplayEventConnection(
-            ConnectionHandle, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    sp<IDisplayEventConnection> createDisplayEventConnection(ConnectionHandle, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     sp<EventThreadConnection> getEventConnection(ConnectionHandle);
 
@@ -161,9 +164,10 @@ public:
     // If makeAvailable is true, then hardware vsync will be turned on.
     // Otherwise, if hardware vsync is not already enabled then this method will
     // no-op.
-    void resyncToHardwareVsync(bool makeAvailable, Fps refreshRate);
+    void resyncToHardwareVsync(bool makeAvailable, Fps refreshRate, bool force_resync = false);
     void resync() EXCLUDES(mRefreshRateConfigsLock);
     void forceNextResync() { mLastResyncTime = 0; }
+    void resyncAndRefresh();
 
     // Passes a vsync sample to VsyncController. periodFlushed will be true if
     // VsyncController detected that the vsync period changed, and false otherwise.
@@ -182,6 +186,7 @@ public:
     void chooseRefreshRateForContent() EXCLUDES(mRefreshRateConfigsLock);
 
     void resetIdleTimer();
+    void handleIdleTimeout(bool enable) { mHandleIdleTimeout = enable; }
 
     // Indicates that touch interaction is taking place.
     void onTouchHint();
@@ -238,6 +243,9 @@ public:
         return mLayerHistory.getLayerFramerate(now, id);
     }
 
+    void setIdleState();
+    void updateThermalFps(float fps);
+
 private:
     friend class TestableScheduler;
 
@@ -246,9 +254,9 @@ private:
     enum class TouchState { Inactive, Active };
 
     // Create a connection on the given EventThread.
-    ConnectionHandle createConnection(std::unique_ptr<EventThread>);
-    sp<EventThreadConnection> createConnectionInternal(
-            EventThread*, ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
+    ConnectionHandle createConnection(std::unique_ptr<EventThread>, bool triggerRefresh);
+    sp<EventThreadConnection> createConnectionInternal(EventThread*, bool triggerRefresh,
+                                  ISurfaceComposer::EventRegistrationFlags eventRegistration = {});
 
     // Update feature state machine to given state when corresponding timer resets or expires.
     void kernelIdleTimerCallback(TimerState) EXCLUDES(mRefreshRateConfigsLock);
@@ -256,7 +264,7 @@ private:
     void touchTimerCallback(TimerState);
     void displayPowerTimerCallback(TimerState);
 
-    void setVsyncPeriod(nsecs_t period);
+    void setVsyncPeriod(nsecs_t period, bool force_resync = false);
 
     using GlobalSignals = RefreshRateConfigs::GlobalSignals;
 
@@ -351,6 +359,15 @@ private:
 
     // Keeps track of whether the screen is acquired for debug
     std::atomic<bool> mScreenAcquired = false;
+
+    // This flag indicates display in idle. Refresh as and when vsync is requested.
+    bool mDisplayIdle;
+
+    // This state variable indicates whether to handle the Idle Timer Callback.
+    std::atomic<bool> mHandleIdleTimeout = true;
+
+    // Cache thermal Fps, and limit to the given level
+    float mThermalFps = 0.0f;
 };
 
 } // namespace scheduler

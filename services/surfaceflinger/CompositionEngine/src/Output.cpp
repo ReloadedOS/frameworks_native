@@ -48,7 +48,9 @@
 #include <ui/DebugUtils.h>
 #include <ui/HdrCapabilities.h>
 #include <utils/Trace.h>
-
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 #include "TracedOrdinal.h"
 
 using aidl::android::hardware::graphics::composer3::Composition;
@@ -93,7 +95,9 @@ ScaleVector getScale(const Rect& from, const Rect& to) {
 }
 
 } // namespace
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 std::shared_ptr<Output> createOutput(
         const compositionengine::CompositionEngine& compositionEngine) {
     return createOutputTemplated<Output>(compositionEngine);
@@ -744,6 +748,20 @@ void Output::updateCompositionState(const compositionengine::CompositionRefreshA
     mLayerRequestingBackgroundBlur = findLayerRequestingBackgroundComposition();
     bool forceClientComposition = mLayerRequestingBackgroundBlur != nullptr;
 
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+         if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+             hasSecureCamera = true;
+         }
+         if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+             hasSecureDisplay = true;
+         }
+         if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+             needsProtected = true;
+         }
+    }
     for (auto* layer : getOutputLayersOrderedByZ()) {
         layer->updateCompositionState(refreshArgs.updatingGeometryThisFrame,
                                       refreshArgs.devOptForceClientComposition ||
@@ -780,6 +798,21 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
     editState().expectedPresentTime = refreshArgs.expectedPresentTime;
 
     compositionengine::OutputLayer* peekThroughLayer = nullptr;
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+            hasSecureCamera = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+            hasSecureDisplay = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+            needsProtected = true;
+        }
+    }
+
     sp<GraphicBuffer> previousOverride = nullptr;
     bool includeGeometry = refreshArgs.updatingGeometryThisFrame;
     uint32_t z = 0;
@@ -829,6 +862,13 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
                     z, includeGeometry, overrideZ, isPeekingThrough,
                     layer->requiresClientComposition());
         }
+#ifdef QTI_UNIFIED_DRAW
+        if (hasSecureCamera || hasSecureDisplay || needsProtected) {
+            layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::DEFAULT);
+        } else {
+            layer->writeLayerFlagToHWC(IQtiComposerClient::LayerFlag::COMPATIBLE);
+        }
+#endif
     }
     editState().outputLayerHash = outputLayerHash;
 }
@@ -932,11 +972,22 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     }
 
     // respect hdrDataSpace only when there is no legacy HDR support
-    const bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
+    bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
             !mDisplayColorProfile->hasLegacyHdrSupport(hdrDataSpace) && !isHdrClientComposition;
+
+    auto layers = getOutputLayersOrderedByZ();
+    bool hasSecureDisplay = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
+         return layer->getLayerFE().getCompositionState()->isSecureDisplay;
+    });
+
     if (isHdr) {
         bestDataSpace = hdrDataSpace;
     }
+
+    if (hasSecureDisplay) {
+        bestDataSpace = ui::Dataspace::V0_SRGB;
+        isHdr = false;
+     }
 
     ui::RenderIntent intent;
     switch (refreshArgs.outputColorSetting) {
@@ -1130,26 +1181,35 @@ void Output::finishFrame(const CompositionRefreshArgs& refreshArgs, GpuCompositi
 
 void Output::updateProtectedContentState() {
     const auto& outputState = getState();
+    bool hasSecureCamera = false;
+    bool hasSecureDisplay = false;
+    bool needsProtected = false;
+    for (auto* layer : getOutputLayersOrderedByZ()) {
+        if (layer->getLayerFE().getCompositionState()->isSecureCamera) {
+            hasSecureCamera = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->isSecureDisplay) {
+            hasSecureDisplay = true;
+        }
+        if (layer->getLayerFE().getCompositionState()->hasProtectedContent) {
+            needsProtected = true;
+        }
+    }
+
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+    const bool supportsProtectedContent = renderEngine.supportsProtectedContent() &&
+                                          !hasSecureCamera && !hasSecureDisplay &&
+                                          outputState.isSecure && needsProtected;
 
     // If we the display is secure, protected content support is enabled, and at
     // least one layer has protected content, we need to use a secure back
     // buffer.
-    if (outputState.isSecure && supportsProtectedContent) {
-        auto layers = getOutputLayersOrderedByZ();
-        bool needsProtected = std::any_of(layers.begin(), layers.end(), [](auto* layer) {
-            return layer->getLayerFE().getCompositionState()->hasProtectedContent;
-        });
-        if (needsProtected != renderEngine.isProtected()) {
-            renderEngine.useProtectedContext(needsProtected);
-        }
-        if (needsProtected != mRenderSurface->isProtected() &&
-            needsProtected == renderEngine.isProtected()) {
-            mRenderSurface->setProtected(needsProtected);
-        }
-    } else if (!outputState.isSecure && renderEngine.isProtected()) {
-        renderEngine.useProtectedContext(false);
+    if (supportsProtectedContent != renderEngine.isProtected()) {
+        renderEngine.useProtectedContext(supportsProtectedContent);
+    }
+    if (supportsProtectedContent != mRenderSurface->isProtected() &&
+        supportsProtectedContent == renderEngine.isProtected()) {
+        mRenderSurface->setProtected(supportsProtectedContent);
     }
 }
 
@@ -1225,7 +1285,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
 
     // Generate the client composition requests for the layers on this output.
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+    const bool supportsProtectedContent = renderEngine.supportsProtectedContent() &&
+                                          mRenderSurface->isProtected();
     std::vector<LayerFE*> clientCompositionLayersFE;
     std::vector<LayerFE::LayerSettings> clientCompositionLayers =
             generateClientCompositionRequests(supportsProtectedContent,
@@ -1236,7 +1297,7 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     OutputCompositionState& outputCompositionState = editState();
     // Check if the client composition requests were rendered into the provided graphic buffer. If
     // so, we can reuse the buffer and avoid client composition.
-    if (mClientCompositionRequestCache) {
+    if (mClientCompositionRequestCache && mLayerRequestingBackgroundBlur != nullptr) {
         if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
                                                    clientCompositionDisplay,
                                                    clientCompositionLayers)) {
@@ -1588,6 +1649,14 @@ void Output::finishPrepareFrame() {
         mPlanner->reportFinalPlan(getOutputLayersOrderedByZ());
     }
     mRenderSurface->prepareFrame(state.usesClientComposition, state.usesDeviceComposition);
+}
+
+void Output::getVisibleLayerInfo(std::vector<std::string> *layerName,
+                                 std::vector<int32_t> *layerSequence) const {
+    for (auto* layer: getOutputLayersOrderedByZ()) {
+        layerName->push_back(layer->getLayerFE().getDebugName());
+        layerSequence->push_back(layer->getLayerFE().getSequence());
+    }
 }
 
 } // namespace impl

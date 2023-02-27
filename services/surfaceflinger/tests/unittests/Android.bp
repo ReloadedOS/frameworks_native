@@ -46,6 +46,9 @@ cc_test {
     name: "libsurfaceflinger_unittest",
     defaults: [
         "libsurfaceflinger_mocks_defaults",
+        "libdisplayconfig_defaults",
+        "libdisplayconfigaidl_defaults",
+        "unfieddraw_defaults",
         "skia_renderengine_deps",
         "surfaceflinger_defaults",
     ],
@@ -167,6 +170,8 @@ cc_defaults {
         "libtonemap",
         "libtrace_proto",
         "perfetto_trace_protos",
+        "vendor.qti.hardware.display.composer@3.0",
+        "vendor.qti.hardware.display.config-V5-ndk",
     ],
     shared_libs: [
         "android.hardware.configstore-utils",
@@ -202,6 +207,7 @@ cc_defaults {
         "android.hardware.graphics.composer@2.2-command-buffer",
         "android.hardware.graphics.composer@2.3-command-buffer",
         "android.hardware.graphics.composer@2.4-command-buffer",
+        "display_intf_headers",
         "libscheduler_test_headers",
         "libsurfaceflinger_headers",
     ],

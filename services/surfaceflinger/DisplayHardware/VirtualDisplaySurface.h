@@ -77,7 +77,8 @@ class VirtualDisplaySurface : public compositionengine::DisplaySurface,
 public:
     VirtualDisplaySurface(HWComposer&, VirtualDisplayId, const sp<IGraphicBufferProducer>& sink,
                           const sp<IGraphicBufferProducer>& bqProducer,
-                          const sp<IGraphicBufferConsumer>& bqConsumer, const std::string& name);
+                          const sp<IGraphicBufferConsumer>& bqConsumer,
+                          const std::string& name, bool secure);
 
     //
     // DisplaySurface interface
@@ -92,6 +93,8 @@ public:
     // Virtual display surface needs to prepare the frame based on composition type. Skip
     // any client composition prediction.
     virtual bool supportsCompositionStrategyPrediction() const override { return false; };
+    virtual int getClientTargetCurrentSlot() override;
+    virtual ui::Dataspace getClientTargetCurrentDataspace() override;
 
 private:
     enum Source : size_t {
@@ -134,6 +137,7 @@ private:
             sp<Fence>* outFence, float outTransformMatrix[16]) override;
     virtual status_t getUniqueId(uint64_t* outId) const override;
     virtual status_t getConsumerUsage(uint64_t* outUsage) const override;
+    virtual void setOutputUsage(uint64_t flag);
 
     //
     // Utility methods
@@ -263,6 +267,8 @@ private:
     compositionengine::impl::HwcBufferCache mHwcBufferCache;
 
     bool mForceHwcCopy;
+    bool mSecure;
+    int mSinkUsage;
 };
 
 } // namespace android

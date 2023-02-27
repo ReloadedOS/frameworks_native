@@ -434,7 +434,6 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
 Error Display::setClientTarget(uint32_t slot, const sp<GraphicBuffer>& target,
         const sp<Fence>& acquireFence, Dataspace dataspace)
 {
-    // TODO: Properly encode client target surface damage
     int32_t fenceFd = acquireFence->dup();
     auto intError = mComposer.setClientTarget(mId, slot, target,
             fenceFd, dataspace, std::vector<Hwc2::IComposerClient::Rect>());
@@ -461,6 +460,28 @@ Error Display::setOutputBuffer(const sp<GraphicBuffer>& buffer,
     close(fenceFd);
     return static_cast<Error>(intError);
 }
+
+Error Display::setDisplayElapseTime(uint64_t timeStamp)
+{
+    auto intError = mComposer.setDisplayElapseTime(mId, timeStamp);
+    return static_cast<Error>(intError);
+}
+
+#ifdef QTI_UNIFIED_DRAW
+Error Display::setClientTarget_3_1(int32_t slot, const sp<Fence>& acquireFence,
+        Dataspace dataspace)
+{
+    int32_t fenceFd = acquireFence->dup();
+    auto intError = mComposer.setClientTarget_3_1(mId, slot, fenceFd, dataspace);
+    return static_cast<Error>(intError);
+}
+
+Error Display::tryDrawMethod(IQtiComposerClient::DrawMethod drawMethod)
+{
+    auto intError = mComposer.tryDrawMethod(mId, drawMethod);
+    return static_cast<Error>(intError);
+}
+#endif
 
 Error Display::setPowerMode(PowerMode mode)
 {
@@ -539,6 +560,14 @@ Error Display::presentOrValidate(nsecs_t expectedPresentTime, uint32_t* outNumTy
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
     }
+
+    // Validate and present display succeeded with comp changes.
+    if (*state == 2) {
+        *outNumTypes = numTypes;
+        *outNumRequests = numRequests;
+        *outPresentFence = new Fence(presentFenceFd);
+    }
+
     return error;
 }
 
@@ -933,6 +962,20 @@ Error Layer::setZOrder(uint32_t z)
     return static_cast<Error>(intError);
 }
 
+Error Layer::setType(uint32_t type)
+{
+    if (type == mType) {
+        return Error::NONE;
+    }
+    auto intError = mComposer.setLayerType(mDisplay->getId(), mId, type);
+    Error error = static_cast<Error>(intError);
+    if (error != Error::NONE) {
+        return error;
+    }
+    mType = type;
+    return error;
+}
+
 // Composer HAL 2.3
 Error Layer::setColorTransform(const android::mat4& matrix) {
     if (CC_UNLIKELY(!mDisplay)) {
@@ -988,6 +1031,21 @@ Error Layer::setBlockingRegion(const Region& region) {
     return static_cast<Error>(intError);
 }
 
+#ifdef QTI_UNIFIED_DRAW
+Error Layer::setLayerFlag(IQtiComposerClient::LayerFlag layerFlag)
+{
+    if (mLayerFlag == layerFlag) {
+        return Error::NONE;
+    }
+    auto intError = mComposer.setLayerFlag(mDisplay->getId(), mId, layerFlag);
+    Error error = static_cast<Error>(intError);
+    if (error != Error::NONE) {
+        return error;
+    }
+    mLayerFlag = layerFlag;
+    return error;
+}
+#endif
 } // namespace impl
 } // namespace HWC2
 } // namespace android

@@ -38,6 +38,12 @@ void MessageQueue::Handler::dispatchFrame(int64_t vsyncId, nsecs_t expectedVsync
     }
 }
 
+void MessageQueue::Handler::dispatchFrameImmed() {
+    if (!mFramePending.exchange(true)) {
+        mQueue.mLooper->sendMessage(this, Message());
+    }
+}
+
 bool MessageQueue::Handler::isFramePending() const {
     return mFramePending.load();
 }
@@ -184,12 +190,20 @@ void MessageQueue::scheduleFrame() {
                                            .earliestVsync = mVsync.lastCallbackTime.count()});
 }
 
+void MessageQueue::scheduleFrameImmed() {
+    ATRACE_CALL();
+    mHandler->dispatchFrameImmed();
+}
+
 void MessageQueue::injectorCallback() {
     ssize_t n;
     DisplayEventReceiver::Event buffer[8];
     while ((n = DisplayEventReceiver::getEvents(&mInjector.tube, buffer, 8)) > 0) {
         for (int i = 0; i < n; i++) {
             if (buffer[i].header.type == DisplayEventReceiver::DISPLAY_EVENT_VSYNC) {
+                // TODO(b/207525987) mFlinger removed upstream, re-add functionality as
+                // necessary.
+                // mFlinger->mVsyncTimeStamp = systemTime(SYSTEM_TIME_MONOTONIC);
                 auto& vsync = buffer[i].vsync;
                 mHandler->dispatchFrame(vsync.vsyncData.preferredVsyncId(),
                                         vsync.vsyncData.preferredExpectedPresentationTime());

@@ -96,7 +96,8 @@ bool BufferQueueLayer::isBufferDue(nsecs_t expectedPresentTime) const {
         mFlinger->mTimeStats->incrementBadDesiredPresent(getSequence());
     }
 
-    const bool isDue = addedTime < expectedPresentTime;
+    bool isDue = addedTime < expectedPresentTime;
+
     return isDue || !isPlausible;
 }
 
@@ -108,6 +109,10 @@ bool BufferQueueLayer::fenceHasSignaled() const {
     Mutex::Autolock lock(mQueueItemLock);
 
     if (SurfaceFlinger::enableLatchUnsignaledConfig != LatchUnsignaledConfig::Disabled) {
+        return true;
+    }
+
+    if (latchUnsignaledBuffers()) {
         return true;
     }
 

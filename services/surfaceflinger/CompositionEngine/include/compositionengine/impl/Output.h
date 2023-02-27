@@ -122,6 +122,8 @@ public:
     virtual std::future<bool> chooseCompositionStrategyAsync(
             std::optional<android::HWComposer::DeviceRequestedChanges>*);
     virtual void resetCompositionStrategy();
+    void getVisibleLayerInfo(std::vector<std::string> *layerName,
+                             std::vector<int32_t> *layerSequence) const override;
 
 protected:
     std::unique_ptr<compositionengine::OutputLayer> createOutputLayer(const sp<LayerFE>&) const;

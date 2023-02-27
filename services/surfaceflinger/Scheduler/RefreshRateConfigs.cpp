@@ -517,7 +517,14 @@ auto RefreshRateConfigs::getBestRefreshRateLocked(const std::vector<LayerRequire
             ? getMaxScoreRefreshRate(scores.rbegin(), scores.rend())
             : getMaxScoreRefreshRate(scores.begin(), scores.end());
 
-    if (primaryRangeIsSingleRate) {
+   bool noFpsScored = std::all_of(scores.begin(), scores.end(),
+                                  [](RefreshRateScore score) { return score.overallScore == 0; });
+   if (noFpsScored) {
+      ALOGV("No fps scored - choose %s", to_string(mActiveModeIt->second->getFps()).c_str());
+      return {mActiveModeIt->second, kNoSignals};
+   }
+
+   if (primaryRangeIsSingleRate) {
         // If we never scored any layers, then choose the rate from the primary
         // range instead of picking a random score from the app range.
         if (std::all_of(scores.begin(), scores.end(),
@@ -669,7 +676,9 @@ RefreshRateConfigs::UidToFrameRateOverride RefreshRateConfigs::getFrameRateOverr
 
     return frameRateOverrides;
 }
-
+const DisplayModes& RefreshRateConfigs::getAllRefreshRates() const {
+  return mDisplayModes;
+}
 std::optional<Fps> RefreshRateConfigs::onKernelTimerChanged(
         std::optional<DisplayModeId> desiredActiveModeId, bool timerExpired) const {
     std::lock_guard lock(mLock);

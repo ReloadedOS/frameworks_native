@@ -33,6 +33,9 @@
 #pragma clang diagnostic ignored "-Wconversion"
 
 #include "DisplayHardware/HWComposer.h"
+#ifdef QTI_UNIFIED_DRAW
+#include <vendor/qti/hardware/display/composer/3.1/IQtiComposerClient.h>
+#endif
 
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
@@ -56,7 +59,9 @@ FloatRect reduce(const FloatRect& win, const Region& exclude) {
 }
 
 } // namespace
-
+#ifdef QTI_UNIFIED_DRAW
+using vendor::qti::hardware::display::composer::V3_1::IQtiComposerClient;
+#endif
 std::unique_ptr<OutputLayer> createOutputLayer(const compositionengine::Output& output,
                                                const sp<compositionengine::LayerFE>& layerFE) {
     return createOutputLayerTemplated<OutputLayer>(output, layerFE);
@@ -376,11 +381,6 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
 
     auto requestedCompositionType = outputIndependentState->compositionType;
 
-    if (requestedCompositionType == Composition::SOLID_COLOR && state.overrideInfo.buffer) {
-        // this should never happen, as SOLID_COLOR is skipped from caching, b/230073351
-        requestedCompositionType = Composition::DEVICE;
-    }
-
     // TODO(b/181172795): We now update geometry for all flattened layers. We should update it
     // only when the geometry actually changes
     const bool isOverridden =
@@ -393,15 +393,13 @@ void OutputLayer::writeStateToHWC(bool includeGeometry, bool skipLayer, uint32_t
     }
 
     writeOutputDependentPerFrameStateToHWC(hwcLayer.get());
-    writeOutputIndependentPerFrameStateToHWC(hwcLayer.get(), *outputIndependentState,
-                                             requestedCompositionType, skipLayer);
+    writeOutputIndependentPerFrameStateToHWC(hwcLayer.get(), *outputIndependentState, skipLayer);
 
     writeCompositionTypeToHWC(hwcLayer.get(), requestedCompositionType, isPeekingThrough,
                               skipLayer);
 
-    if (requestedCompositionType == Composition::SOLID_COLOR) {
-        writeSolidColorStateToHWC(hwcLayer.get(), *outputIndependentState);
-    }
+    // Always set the layer color after setting the composition type.
+    writeSolidColorStateToHWC(hwcLayer.get(), *outputIndependentState);
 
     editState().hwc->stateOverridden = isOverridden;
     editState().hwc->layerSkipped = skipLayer;
@@ -544,7 +542,7 @@ void OutputLayer::writeOutputDependentPerFrameStateToHWC(HWC2::Layer* hwcLayer) 
 
 void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
         HWC2::Layer* hwcLayer, const LayerFECompositionState& outputIndependentState,
-        Composition compositionType, bool skipLayer) {
+        bool skipLayer) {
     switch (auto error = hwcLayer->setColorTransform(outputIndependentState.colorTransform)) {
         case hal::Error::NONE:
             break;
@@ -568,7 +566,7 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
     }
 
     // Content-specific per-frame state
-    switch (compositionType) {
+    switch (outputIndependentState.compositionType) {
         case Composition::SOLID_COLOR:
             // For compatibility, should be written AFTER the composition type.
             break;
@@ -585,10 +583,20 @@ void OutputLayer::writeOutputIndependentPerFrameStateToHWC(
             // Ignored
             break;
     }
+
+    if (auto error = hwcLayer->setType(outputIndependentState.layerClass);
+        error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set layer class: %s (%d)", getLayerFE().getDebugName(),
+              to_string(error).c_str(), static_cast<int32_t>(error));
+    }
 }
 
 void OutputLayer::writeSolidColorStateToHWC(HWC2::Layer* hwcLayer,
                                             const LayerFECompositionState& outputIndependentState) {
+    if (outputIndependentState.compositionType != Composition::SOLID_COLOR) {
+        return;
+    }
+
     aidl::android::hardware::graphics::composer3::Color color = {outputIndependentState.color.r,
                                                                  outputIndependentState.color.g,
                                                                  outputIndependentState.color.b,
@@ -697,6 +705,22 @@ void OutputLayer::writeCursorPositionToHWC() const {
               static_cast<int32_t>(error));
     }
 }
+
+#ifdef QTI_UNIFIED_DRAW
+void OutputLayer::writeLayerFlagToHWC(IQtiComposerClient::LayerFlag flag) {
+    // Skip doing this if there is no HWC interface
+    auto hwcLayer = getHwcLayer();
+    if (!hwcLayer) {
+        return;
+    }
+    if (auto error = hwcLayer->setLayerFlag(flag);
+        error != hal::Error::NONE) {
+        ALOGE("[%s] Failed to set layer flag  %s (%d))",
+              getLayerFE().getDebugName(), to_string(error).c_str(), static_cast<int32_t>(error));
+    }
+
+}
+#endif
 
 HWC2::Layer* OutputLayer::getHwcLayer() const {
     const auto& state = getState();

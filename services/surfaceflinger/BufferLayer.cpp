@@ -56,6 +56,9 @@
 #include "LayerRejecter.h"
 #include "TimeStats/TimeStats.h"
 
+#include "smomo_interface.h"
+#include "layer_extn_intf.h"
+
 namespace android {
 
 using gui::WindowInfo;
@@ -72,6 +75,10 @@ BufferLayer::BufferLayer(const LayerCreationArgs& args)
 
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
     mProtectedByApp = args.flags & ISurfaceComposerClient::eProtectedByApp;
+
+    if (mFlinger->mLayerExt) {
+        mLayerClass = mFlinger->mLayerExt->GetLayerClass(mName);
+    }
 }
 
 BufferLayer::~BufferLayer() {
@@ -522,6 +529,10 @@ bool BufferLayer::latchBuffer(bool& recomputeVisibleRegions, nsecs_t latchTime,
         recomputeVisibleRegions = true;
     }
 
+    if (SmomoIntf *smoMo = mFlinger->getSmomoInstance(getLayerStack().id)) {
+        smoMo->SetPresentTime(getSequence(), mBufferInfo.mDesiredPresentTime);
+    }
+
     return true;
 }
 
@@ -537,6 +548,21 @@ bool BufferLayer::isProtected() const {
     return (mBufferInfo.mBuffer != nullptr) &&
             (mBufferInfo.mBuffer->getUsage() & GRALLOC_USAGE_PROTECTED);
 }
+
+bool BufferLayer::latchUnsignaledBuffers() {
+    static bool propertyLoaded = false;
+    static bool latch = false;
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!propertyLoaded) {
+        char value[PROPERTY_VALUE_MAX] = {};
+        property_get("debug.sf.latch_unsignaled", value, "0");
+        latch = atoi(value);
+        propertyLoaded = true;
+    }
+    return latch;
+}
+
 
 // As documented in libhardware header, formats in the range
 // 0x100 - 0x1FF are specific to the HAL implementation, and

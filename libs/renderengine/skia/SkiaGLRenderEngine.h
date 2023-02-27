@@ -63,6 +63,7 @@ public:
     bool supportsBackgroundBlur() override { return mBlurFilter != nullptr; }
     void onActiveDisplaySizeChanged(ui::Size size) override;
     int reportShadersCompiled() override;
+    int getRETid() { return gettid(); }
 
 protected:
     void dump(std::string& result) override;

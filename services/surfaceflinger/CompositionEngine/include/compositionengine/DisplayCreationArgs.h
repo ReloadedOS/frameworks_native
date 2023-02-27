@@ -25,6 +25,7 @@
 #include <ui/StaticDisplayInfo.h>
 
 #include "DisplayHardware/PowerAdvisor.h"
+#include <composer_extn_intf.h>
 
 namespace android::compositionengine {
 
@@ -48,6 +49,9 @@ struct DisplayCreationArgs {
 
     // Debugging. Human readable name for the display.
     std::string name;
+
+    // Helper library to get next FBT slot.
+    composer::DisplayExtnIntf *displayExtnIntf = nullptr;
 };
 
 /**
@@ -83,6 +87,10 @@ public:
         return *this;
     }
 
+    DisplayCreationArgsBuilder& setDisplayExtnIntf(composer::DisplayExtnIntf *displayExtnIntf) {
+        mArgs.displayExtnIntf = std::move(displayExtnIntf);
+        return *this;
+    }
 private:
     DisplayCreationArgs mArgs;
 };
